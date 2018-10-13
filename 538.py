@@ -1,103 +1,109 @@
-# Author: Ricky Jacobson
-# File: 538.py
-# Description: This script solves the FiveThirtyEight Riddler Express puzzle for 4/6/2018
+import csv
+from urllib import request
+from contextlib import closing
+import random
+
+'''
+Ricky Jacobson's solution to FiveThirtyEight's Riddler Express 10/12.
+See https://fivethirtyeight.com/features/so-you-want-to-tether-your-goat-now-what/
+for problem statement.
+
+The most important part of this problem is acknowledging that birthdays are
+not in fact evenly distributed. For example, babies in America are most rarely
+born on major US holidays, such as Christmas Day (2/25), Christmas Eve (2/24),
+New Years Day (1/1) and the Fourth of July (7/4).
+
+This script uses birth data from FiveThirtyEight's Friday the 13th project,
+which can be found here:
+https://github.com/fivethirtyeight/data/tree/master/births
+'''
+
+class DateLoader():
+	def __init__(self):
+		self.births_by_date = {}
+		self.total_births = 0
+
+	# Loads the birthdate data from FiveThirtyEight's Friday the 13th project
+	def load(self):
+		# Load data from CDC and NCHS for 1994-2003
+		url = "https://raw.githubusercontent.com/fivethirtyeight/data/master/births/US_births_1994-2003_CDC_NCHS.csv"
+		with closing(request.urlopen(url)) as r:
+			c= csv.DictReader(r.read().decode('utf-8').split('\r'))
+			for row in c:
+				date =  (int(row['month']), int(row['date_of_month']))
+				births = int(row['births'])
+				if date not in self.births_by_date:
+					self.births_by_date[date] = births
+				else:
+					self.births_by_date[date] += births
+				self.total_births += births
+
+		# Load from Social Security Administration for 2004-2013
+		# Data from 2000-2003 & 2014 are ignored
+		# so that leap day data are handled properly
+		url = "https://raw.githubusercontent.com/fivethirtyeight/data/master/births/US_births_2000-2014_SSA.csv"
+		with closing(request.urlopen(url)) as r:
+			c= csv.DictReader(r.read().decode('utf-8').split('\r'))
+			for row in c:
+				# Ignore data for years earlier
+				if int(row['year']) <= 2003 or int(row['year']) == 2014:
+					continue
+				date =  (int(row['month']), int(row['date_of_month']))
+				births = int(row['births'])
+				if date not in self.births_by_date:
+					self.births_by_date[date] = births
+				else:
+					self.births_by_date[date] += births
+				self.total_births += births
+
+	# Returns the probability of being born on a given date
+	def probability(self, date):
+		return self.births_by_date[date]/self.total_births
+
+	# Returns the expected number of failed trials until a success
+	# where each trial has probability, self.probability(date)
+	def expected_number_of_trials(self, date):
+		# The expected number of trials until success is simply
+		# 1/probability of success. The proof is left as an exercise
+		# to the reader.
+		return 1/self.probability(date) - 1
+
+# Simulates singing the Unbirthday Song
+# to random people until it is unwarrented,
+# 'iterations' times.
+# 
+# Returns the average number of people sung to 
+def simulate(date_loader, iterations):
+	total = 0
+	for i in range(iterations):
+		# Choose random date
+		date = random.sample(date_loader.births_by_date.keys(),1)[0]
+		# Only allow leap years 1 in 4 times 
+		while date == (2,29) and random.randrange(4) != 0:
+			date = random.sample(date_loader.births_by_date.keys(), 1)[0]
+		count = 0
+		p = date_loader.probability(date)
+		while random.random() > p:
+			count += 1
+		total += count
+
+	return total/iterations
 
 def main():
-	DAYS_PER_MONTH = {month:(28 if month==2 else (30 if month in (4,6,9,11) else 31)) for month in range(1,13)} # Stores the number of days in each month
-	years = [0 for i in range(1,100)] # Stores the number of occurrences in each year
+	loader = DateLoader()
+	loader.load()
 
-	for month in range(1,13): # For each month in the year
-		for day in range(1, DAYS_PER_MONTH[month]+1): # For each day
-			if month*day<=99:
-				years[month*day-1] += 1 # Add 1 to that year
+	# Calculate expected value numerically
+	expected_value = 0
+	for date in loader.births_by_date:
+		# The probability that 'date' is today (accounting for leap days) 
+		prob = (1 if date == (2,29) else 4)/(365*4+1)
+		expected_value += prob*loader.expected_number_of_trials(date)
 
-	## NOTE: 2/29 is NOT counted because 2*29=58 and 2058 is not a leap year.
-	
-	mx = max(years)
-	mn = min(years)
-	total = sum(years)
+	# Expected Value = ~366.253
+	print(expected_value)
 
-	maxyears = [str(i+1) for i in range(len(years)) if years[i] == mx]
-	minyears = [str(i+1) for i in range(len(years)) if years[i] == mn]
-
-	print("Total number of occurrences: %s"%total)
-	print("Years with most occurrences (%s): 20%s"%(mx, ", '".join(maxyears)))
-	print("Years with fewest occurrences (%s): 20%s"%(mn, ", '".join(minyears)))
-
-	## Find longest stretch
-	
-	assert mn == 0 # Make sure there are years without attacks. This should be at least be true for prime numbered years greater than 31.
-
-	minyears = [int(year) for year in minyears] # convert to ints
-
-	gaps = []
-	index = 1
-
-	# Break minyears into groups of consecutive years
-	while index < len(minyears):
-		if minyears[index] - minyears[index-1] > 1:
-			gaps.append(minyears[:index])
-			minyears = minyears[index:]
-			index = 1
-		else:
-			index += 1
-	gaps.append(minyears)
-
-	maxsize = max((len(gap) for gap in gaps)) # find the maximum gap size
-	gaps = [gap for gap in gaps if len(gap) == maxsize] # filter out all but the largest gaps
-	
-	boundaries = {} # Stores the date boundaries of each gap and their associated length
-	
-	# For each gap, calculate the number of days between occurrences
-	for gap in gaps:
-		days = 0
-
-		# First add all the full years
-		for year in gap:
-			days += 366 if year%4==0 else 365 # accounts for leap years
-
-		# Next, add all the days from the last occurrence to the end of the year
-		startyear = gap[0]-1
-		startmonth = 12
-		# Count backward from the end of the year until an occurrence is found
-		while startyear%startmonth!=0: 
-			days += DAYS_PER_MONTH[startmonth] # Add all the days in each month without an occurrence
-			startmonth -= 1
-		days += DAYS_PER_MONTH[startmonth]-startyear//startmonth
-
-		# Don't forget about the leap day
-		if startyear%4==0 and startmonth <= 2:
-			days += 1 # leap day
-
-		# Finally, add all the days from the start of the next year to the next occurrence
-		endyear = gap[-1]+1
-		endmonth = 1
-		# Count forward from the beginning of the year until an occurrence is found
-		while endyear%endmonth!=0 or endyear//endmonth>DAYS_PER_MONTH[endmonth]:
-			days += DAYS_PER_MONTH[endmonth] # Add all the days in each month without an occurrence
-			endmonth += 1
-		days += endyear//endmonth
-
-		# Don't forget about the leap day again
-		if endyear%4==0 and endmonth>2:
-			days += 1
-
-		# Save the dates to 'boundaries' based on their length (days)
-		if days in boundaries:
-			boundaries[days].append("%s/%s/20%s – %s/%s/20%s"%(startmonth,startyear//startmonth,startyear,endmonth,endyear//endmonth,endyear)) # in case multiple boundaries have the same length
-		else:
-			boundaries[days] = ["%s/%s/20%s – %s/%s/20%s"%(startmonth,startyear//startmonth,startyear,endmonth,endyear//endmonth,endyear)]
-
-	# Find the longest stretch
-	longest = max(boundaries.keys())
-	print("The longest stretch between attacks is %s days, which occurs %s."%(longest," and ".join(boundaries[longest])))
-
+	# Simulate and return average
+	print(simulate(loader, iterations = 100000))
 
 main()
-
-
-# ---OUTPUT---
-# Total number of occurrences: 212
-# Years with most occurrences (7): 2024
-# Years with fewest occurrences (0): 2037, '41, '43, '47, '53, '58, '59, '61, '62, '67, '71, '73, '74, '79, '82, '83, '86, '89, '94, '97
-# The longest stretch between attacks is 1097 days, which occurs 3/19/2057 – 3/20/2060.
